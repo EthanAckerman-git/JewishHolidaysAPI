@@ -7,8 +7,33 @@
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
+  "keywords": [
+    "jewish",
+    "holidays",
+    "api",
+    "hebrew",
+    "calendar",
+    "shabbat",
+    "yom-tov",
+    "sephardi",
+    "ashkenazi",
+    "shomer"
+  ],
+  "author": "Ethan Ackerman",
+  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
     "@hebcal/core": "^5.2.2"
-  }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ethanackerman/jewish-holidays-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ethanackerman/jewish-holidays-api/issues"
+  },
+  "homepage": "https://github.com/ethanackerman/jewish-holidays-api#readme"
 }
