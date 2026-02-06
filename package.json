@@ -1,0 +1,14 @@
+{
+  "name": "jewish-holidays-api",
+  "version": "1.0.0",
+  "description": "API to check if a date is a Jewish holiday with Sephardi and Ashkenazi traditions",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@hebcal/core": "^5.2.2"
+  }
+}
