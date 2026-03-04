@@ -1,7 +1,7 @@
 {
   "name": "jewish-holidays-api",
-  "version": "1.0.0",
-  "description": "API to check if a date is a Jewish holiday with Sephardi and Ashkenazi traditions",
+  "version": "2.0.0",
+  "description": "RESTful API for Jewish holiday lookups, Shabbat detection, Sephardi/Ashkenazi traditions, shomer observance levels, and Gregorian-Hebrew date conversion",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -23,18 +23,21 @@
   "license": "MIT",
   "dependencies": {
     "@hebcal/core": "^5.2.2",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ethanackerman/jewish-holidays-api.git"
+    "url": "https://github.com/EthanAckerman-git/JewishHolidaysAPI.git"
   },
   "bugs": {
-    "url": "https://github.com/ethanackerman/jewish-holidays-api/issues"
+    "url": "https://github.com/EthanAckerman-git/JewishHolidaysAPI/issues"
   },
-  "homepage": "https://github.com/ethanackerman/jewish-holidays-api#readme"
+  "homepage": "https://github.com/EthanAckerman-git/JewishHolidaysAPI#readme"
 }

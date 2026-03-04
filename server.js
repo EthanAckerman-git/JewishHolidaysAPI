@@ -1,103 +1,219 @@
+/**
+ * Jewish Holidays API
+ * @author Ethan Ackerman
+ * @description RESTful API for Jewish holiday lookups, Shabbat detection,
+ *   Sephardi/Ashkenazi tradition differences, shomer observance levels,
+ *   and Gregorian-Hebrew date conversion.
+ * @license MIT
+ * @see https://github.com/EthanAckerman-git/JewishHolidaysAPI
+ */
+
+'use strict';
+
 const express = require('express');
 const cors = require('cors');
-const { HebrewCalendar, HDate, Location, Event, Zmanim } = require('@hebcal/core');
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const { HebrewCalendar, HDate } = require('@hebcal/core');
+
+// ─── App Initialization ─────────────────────────────────────────────────────
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// ─── Middleware ──────────────────────────────────────────────────────────────
 
-// Holiday categories for shomer/non-shomer filtering
-const HOLIDAY_CATEGORIES = {
-  // Major holidays - no work for both shomer and non-shomer
-  majorYomTov: [
+app.use(helmet());
+app.use(cors());
+app.use(compression());
+
+/** Rate limiter: 100 requests per minute per IP */
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests',
+    message: 'Rate limit exceeded. Please wait before making more requests.',
+    retryAfterSeconds: 60
+  }
+});
+app.use(limiter);
+
+// ─── Shared Constants ───────────────────────────────────────────────────────
+
+/** Day-of-week lookup array (index matches Date.getDay()) */
+const DAY_NAMES = Object.freeze([
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday',
+  'Thursday', 'Friday', 'Saturday'
+]);
+
+/** Valid tradition query values */
+const VALID_TRADITIONS = Object.freeze(['ashkenazi', 'sephardi', 'all']);
+
+/** Valid shomer query values */
+const VALID_SHOMER = Object.freeze(['shomer', 'non-shomer', 'partial', 'all']);
+
+/** Valid Hebrew month names accepted by @hebcal/core */
+const VALID_HEBREW_MONTHS = Object.freeze([
+  'Nisan', 'Iyyar', 'Sivan', 'Tamuz', 'Av', 'Elul',
+  'Tishrei', 'Cheshvan', 'Kislev', 'Tevet', 'Shvat', 'Adar',
+  'Adar I', 'Adar II'
+]);
+
+/** All available API endpoint paths */
+const AVAILABLE_ENDPOINTS = Object.freeze([
+  '/api/is-holiday',
+  '/api/holidays/:hebrewYear',
+  '/api/gregorian-holidays/:year',
+  '/api/upcoming',
+  '/api/convert/to-hebrew',
+  '/api/convert/to-gregorian'
+]);
+
+// ─── Holiday Classification Data ────────────────────────────────────────────
+
+/**
+ * Holiday categories used for shomer/non-shomer work-restriction filtering.
+ * Each key maps to an array of holiday name strings as rendered by @hebcal/core.
+ */
+const HOLIDAY_CATEGORIES = Object.freeze({
+  majorYomTov: Object.freeze([
     'Pesach I', 'Pesach II', 'Pesach VII', 'Pesach VIII',
     'Shavuot I', 'Shavuot II',
     'Sukkot I', 'Sukkot II', 'Shmini Atzeret', 'Simchat Torah',
     'Rosh Hashana I', 'Rosh Hashana II', 'Yom Kippur'
-  ],
-  // Chol Hamoed - intermediate days where work is permitted
-  cholHamoed: [
+  ]),
+  cholHamoed: Object.freeze([
     'Pesach III', 'Pesach IV', 'Pesach V', 'Pesach VI',
     'Sukkot III', 'Sukkot IV', 'Sukkot V', 'Sukkot VI', 'Sukkot VII'
-  ],
-  // Minor holidays - work permitted
-  minorHolidays: [
+  ]),
+  minorHolidays: Object.freeze([
     'Purim', 'Shushan Purim', 'Chanukah', 'Tu BiShvat', 'Lag BaOmer',
     "Tu B'Av", 'Yom HaAtzmaut', 'Yom Yerushalayim', 'Yom HaShoah',
     'Yom HaZikaron', 'Sigd'
-  ],
-  // Fast days - work permitted but restrictions apply
-  fastDays: [
+  ]),
+  fastDays: Object.freeze([
     "Ta'anit Bechorot", "Ta'anit Esther", "Tisha B'Av",
     'Tzom Gedaliah', 'Asara BTeves', "Shiva Asar B'Tammuz"
-  ],
-  // Rosh Chodesh - work permitted
-  roshChodesh: ['Rosh Chodesh'],
-  // Shabbat - always no work for shomer
-  shabbat: ['Shabbat']
-};
+  ]),
+  roshChodesh: Object.freeze(['Rosh Chodesh']),
+  shabbat: Object.freeze(['Shabbat'])
+});
 
-// Shabbat restrictions by shomer level
-const SHABBAT_OBSERVANCE = {
-  shomer: {
+/** Restriction details keyed by shomer observance level */
+const SHABBAT_OBSERVANCE = Object.freeze({
+  shomer: Object.freeze({
     noWork: true,
     noElectronics: true,
     noDriving: true,
     noCooking: true,
     noMoney: true,
     description: 'Full Shabbat observance - no melacha (creative work)'
-  },
-  'non-shomer': {
+  }),
+  'non-shomer': Object.freeze({
     noWork: false,
     noElectronics: false,
     noDriving: false,
     noCooking: false,
     noMoney: false,
     description: 'No religious restrictions - may choose to attend synagogue'
-  },
-  partial: {
+  }),
+  partial: Object.freeze({
     noWork: 'optional',
     noElectronics: 'partial',
     noDriving: 'avoid',
     noCooking: false,
     noMoney: 'avoid',
     description: 'Partial observance - varies by individual practice'
-  }
-};
+  })
+});
 
-// Tradition-specific holiday differences (Sephardi vs Ashkenazi)
-const TRADITION_DIFFERENCES = {
-  pesach: {
-    kitniyot: {
+/** Tradition-specific differences between Sephardi and Ashkenazi customs */
+const TRADITION_DIFFERENCES = Object.freeze({
+  pesach: Object.freeze({
+    kitniyot: Object.freeze({
       ashkenazi: 'Forbidden (no rice, beans, corn)',
       sephardi: 'Permitted (rice, beans, corn allowed)'
-    }
-  },
-  sukkot: {
-    ushpizin: {
+    })
+  }),
+  sukkot: Object.freeze({
+    ushpizin: Object.freeze({
       ashkenazi: 'Traditional order of guests',
       sephardi: 'May include additional spiritual guests'
-    }
-  },
-  chanukah: {
-    candleLighting: {
+    })
+  }),
+  chanukah: Object.freeze({
+    candleLighting: Object.freeze({
       ashkenazi: 'Right to left, sufficient lighting',
       sephardi: 'All candles each night, left to right'
-    }
-  },
-  shabbat: {
-    minhag: {
+    })
+  }),
+  shabbat: Object.freeze({
+    minhag: Object.freeze({
       ashkenazi: 'Shalom Aleichem, Eshet Chayil',
       sephardi: 'Different zemirot, customs'
-    }
-  }
-};
+    })
+  })
+});
+
+// ─── Helper Functions ───────────────────────────────────────────────────────
 
 /**
- * Categorize a holiday for shomer/non-shomer filtering
- * @param {string} holidayName
- * @returns {Object} Category info
+ * Parse a YYYY-MM-DD date string into a Date object.
+ * Returns the current date when no string is provided.
+ * @param {string|undefined} dateStr - Date in YYYY-MM-DD format
+ * @returns {{ date: Date|null, error: string|null }}
+ */
+function parseDate(dateStr) {
+  if (!dateStr) return { date: new Date(), error: null };
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) {
+    return { date: null, error: 'Invalid date format. Use YYYY-MM-DD' };
+  }
+  return { date: d, error: null };
+}
+
+/**
+ * Validate the `tradition` and `shomer` query parameters.
+ * @param {string} tradition
+ * @param {string} shomer
+ * @returns {string|null} Error message, or null if valid.
+ */
+function validateQueryParams(tradition, shomer) {
+  if (!VALID_TRADITIONS.includes(tradition)) {
+    return 'Invalid tradition parameter. Must be: ashkenazi, sephardi, or all';
+  }
+  if (!VALID_SHOMER.includes(shomer)) {
+    return 'Invalid shomer parameter. Must be: shomer, non-shomer, partial, or all';
+  }
+  return null;
+}
+
+/**
+ * Format a Gregorian Date as an ISO date string (YYYY-MM-DD).
+ * @param {Date} d
+ * @returns {string}
+ */
+function toISODate(d) {
+  return d.toISOString().split('T')[0];
+}
+
+/**
+ * Safely retrieve holidays on a given Hebrew date.
+ * @param {HDate} hd
+ * @returns {import('@hebcal/core').Event[]}
+ */
+function safeGetHolidays(hd) {
+  return HebrewCalendar.getHolidaysOnDate(hd) || [];
+}
+
+/**
+ * Categorize a rendered holiday name for work-restriction filtering.
+ * @param {string} holidayName - The rendered holiday name from @hebcal/core
+ * @returns {{ category: string, workForbidden: boolean, level: string }}
  */
 function categorizeHoliday(holidayName) {
   if (HOLIDAY_CATEGORIES.shabbat.includes(holidayName)) {
@@ -122,31 +238,63 @@ function categorizeHoliday(holidayName) {
 }
 
 /**
- * Check if a Hebrew date is Shabbat
- * @param {HDate} hebrewDate
- * @returns {boolean}
+ * Return tradition-specific custom info for a given holiday basename.
+ * @param {string} basename - e.g. "Pesach", "Chanukah"
+ * @param {string} tradition - "ashkenazi", "sephardi", or "all"
+ * @returns {Object|null}
  */
-function isShabbat(hebrewDate) {
-  return hebrewDate.getDay() === 6; // 6 = Saturday (Hebrew calendar: 0=Sun, 6=Sat)
+function getTraditionSpecificInfo(basename, tradition) {
+  if (tradition === 'all') return null;
+  const key = basename.toLowerCase().replace(/\s+/g, '');
+  const info = TRADITION_DIFFERENCES[key];
+  if (!info) return null;
+  const result = {};
+  for (const [aspect, details] of Object.entries(info)) {
+    result[aspect] = details[tradition];
+  }
+  return result;
 }
 
 /**
- * Check if a Hebrew date is a Jewish holiday
+ * Format a hebcal Event into a standardised holiday object.
+ * Shared by /holidays, /gregorian-holidays, and /upcoming endpoints.
+ * @param {import('@hebcal/core').Event} event
+ * @param {string} tradition
+ * @param {Object} [extra] - Additional fields to merge (e.g. daysFromNow)
+ * @returns {Object}
+ */
+function formatHolidayEvent(event, tradition, extra = {}) {
+  const holidayName = event.render();
+  const categoryInfo = categorizeHoliday(holidayName);
+  const gregDate = event.date.greg();
+  return {
+    name: holidayName,
+    basename: event.basename(),
+    hebrewDate: event.date.render('he'),
+    gregorianDate: toISODate(gregDate),
+    dayOfWeek: DAY_NAMES[gregDate.getDay()],
+    category: categoryInfo.category,
+    level: categoryInfo.level,
+    workForbidden: categoryInfo.workForbidden,
+    traditionSpecific: getTraditionSpecificInfo(event.basename(), tradition),
+    ...extra
+  };
+}
+
+/**
+ * Build a full holiday-check result for the /is-holiday endpoint.
  * @param {HDate} hebrewDate
- * @param {Object} options
- * @returns {Object} Holiday information
+ * @param {{ tradition: string, shomer: string }} options
+ * @returns {Object}
  */
 function checkHoliday(hebrewDate, options = {}) {
   const { tradition = 'all', shomer = 'all' } = options;
-  
-  const events = HebrewCalendar.getHolidaysOnDate(hebrewDate);
-  const shabbat = isShabbat(hebrewDate);
-  
-  // Handle Shabbat
-  if (shabbat) {
+  const events = safeGetHolidays(hebrewDate);
+  const isSabbath = hebrewDate.getDay() === 6;
+
+  if (isSabbath) {
     const shomerLevel = shomer === 'all' ? 'shomer' : shomer;
     const observance = SHABBAT_OBSERVANCE[shomerLevel] || SHABBAT_OBSERVANCE.shomer;
-    
     return {
       isHoliday: true,
       isShabbat: true,
@@ -154,28 +302,27 @@ function checkHoliday(hebrewDate, options = {}) {
       holidayName: 'Shabbat',
       description: 'Day of rest',
       hebrewDate: hebrewDate.render('he'),
-      gregorianDate: hebrewDate.greg().toISOString().split('T')[0],
+      gregorianDate: toISODate(hebrewDate.greg()),
       dayOfWeek: 'Saturday',
-      tradition: tradition,
-      shomer: shomer,
+      tradition,
+      shomer,
       category: 'shabbat',
       restrictions: observance,
       workForbidden: shomer === 'shomer',
-      otherHolidays: events.length > 0 ? events.map(e => e.render()) : []
+      otherHolidays: events.map(e => e.render())
     };
   }
-  
-  // No holidays
-  if (!events || events.length === 0) {
+
+  if (events.length === 0) {
     return {
       isHoliday: false,
       isShabbat: false,
       isYomTov: false,
       holidayName: null,
       hebrewDate: hebrewDate.render('he'),
-      gregorianDate: hebrewDate.greg().toISOString().split('T')[0],
-      tradition: tradition,
-      shomer: shomer,
+      gregorianDate: toISODate(hebrewDate.greg()),
+      tradition,
+      shomer,
       restrictions: null
     };
   }
@@ -184,11 +331,10 @@ function checkHoliday(hebrewDate, options = {}) {
   const holidayName = holiday.render();
   const basename = holiday.basename();
   const categoryInfo = categorizeHoliday(holidayName);
-  
-  // Determine if work is forbidden based on shomer level
+
   let workForbidden = categoryInfo.workForbidden;
   if (shomer === 'non-shomer') {
-    workForbidden = false; // Non-shomer generally permits work on most days
+    workForbidden = false;
   } else if (shomer === 'partial') {
     workForbidden = categoryInfo.level === 'strict' ? 'discouraged' : false;
   }
@@ -197,16 +343,16 @@ function checkHoliday(hebrewDate, options = {}) {
     isHoliday: true,
     isShabbat: false,
     isYomTov: categoryInfo.category === 'yom-tov',
-    holidayName: holidayName,
-    basename: basename,
-    description: holiday.render(),
+    holidayName,
+    basename,
+    description: holidayName,
     hebrewDate: hebrewDate.render('he'),
-    gregorianDate: hebrewDate.greg().toISOString().split('T')[0],
-    tradition: tradition,
-    shomer: shomer,
+    gregorianDate: toISODate(hebrewDate.greg()),
+    tradition,
+    shomer,
     category: categoryInfo.category,
     level: categoryInfo.level,
-    workForbidden: workForbidden,
+    workForbidden,
     restrictions: shomer !== 'all' ? SHABBAT_OBSERVANCE[shomer] : null,
     traditionSpecific: getTraditionSpecificInfo(basename, tradition),
     allHolidays: events.map(e => e.render())
@@ -214,202 +360,123 @@ function checkHoliday(hebrewDate, options = {}) {
 }
 
 /**
- * Get tradition-specific holiday information
- * @param {string} holidayName
- * @param {string} tradition
- * @returns {Object|null}
+ * Build a Hebrew-date detail object (used by both convert endpoints).
+ * @param {HDate} hd
+ * @returns {Object}
  */
-function getTraditionSpecificInfo(holidayName, tradition) {
-  if (tradition === 'all') return null;
-  
-  const key = holidayName.toLowerCase().replace(/\s+/g, '');
-  const info = TRADITION_DIFFERENCES[key];
-  
-  if (!info) return null;
-  
-  const result = {};
-  for (const [aspect, details] of Object.entries(info)) {
-    result[aspect] = details[tradition];
-  }
-  return result;
+function buildHebrewDateDetail(hd) {
+  return {
+    day: hd.getDate(),
+    month: hd.getMonthName(),
+    year: hd.getFullYear(),
+    rendered: hd.render('en'),
+    renderedHebrew: hd.render('he')
+  };
 }
 
-// API endpoint: Check if a date is a Jewish holiday
-// GET /api/is-holiday?date=YYYY-MM-DD&tradition=ashkenazi|sephardi|all&shomer=shomer|non-shomer|partial|all
+/**
+ * Set cache headers for deterministic responses (date conversions, yearly lists).
+ * Caches publicly for 1 hour; stale-while-revalidate for 24 h.
+ * @param {import('express').Response} res
+ */
+function setCacheHeaders(res) {
+  res.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+}
+
+// ─── Route Handlers ─────────────────────────────────────────────────────────
+
+/**
+ * GET /api/is-holiday
+ * Check if a specific date is a Jewish holiday or Shabbat.
+ */
 app.get('/api/is-holiday', (req, res) => {
   try {
     const { date, tradition = 'all', shomer = 'all' } = req.query;
-    
-    // Validate parameters
-    const validTraditions = ['ashkenazi', 'sephardi', 'all'];
-    const validShomer = ['shomer', 'non-shomer', 'partial', 'all'];
-    
-    if (!validTraditions.includes(tradition)) {
-      return res.status(400).json({
-        error: 'Invalid tradition parameter. Must be: ashkenazi, sephardi, or all'
-      });
-    }
-    
-    if (!validShomer.includes(shomer)) {
-      return res.status(400).json({
-        error: 'Invalid shomer parameter. Must be: shomer, non-shomer, partial, or all'
-      });
-    }
 
-    // Parse the date or use today
-    let targetDate;
-    if (date) {
-      targetDate = new Date(date);
-      if (isNaN(targetDate.getTime())) {
-        return res.status(400).json({
-          error: 'Invalid date format. Use YYYY-MM-DD'
-        });
-      }
-    } else {
-      targetDate = new Date();
-    }
+    const paramError = validateQueryParams(tradition, shomer);
+    if (paramError) return res.status(400).json({ error: paramError });
 
-    // Convert to Hebrew date
+    const { date: targetDate, error: dateError } = parseDate(date);
+    if (dateError) return res.status(400).json({ error: dateError });
+
     const hebrewDate = new HDate(targetDate);
-    
-    // Check for holidays
     const result = checkHoliday(hebrewDate, { tradition, shomer });
-    
+
+    if (date) setCacheHeaders(res);
     res.json(result);
   } catch (error) {
     console.error('Error checking holiday:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
   }
 });
 
-// API endpoint: Get holidays for a Hebrew year
-// GET /api/holidays/:hebrewYear?tradition=ashkenazi|sephardi|all&shomer=shomer|non-shomer|all
+/**
+ * GET /api/holidays/:hebrewYear
+ * Get all holidays for a given Hebrew year (5000-6000).
+ */
 app.get('/api/holidays/:hebrewYear', (req, res) => {
   try {
-    const { hebrewYear } = req.params;
     const { tradition = 'all', shomer = 'all' } = req.query;
-    
-    const year = parseInt(hebrewYear);
+    const year = parseInt(req.params.hebrewYear, 10);
+
     if (isNaN(year) || year < 5000 || year > 6000) {
-      return res.status(400).json({
-        error: 'Invalid Hebrew year. Use years 5000-6000'
-      });
+      return res.status(400).json({ error: 'Invalid Hebrew year. Use years 5000-6000' });
     }
 
     const events = HebrewCalendar.calendar({
-      year: year,
-      isHebrewYear: true,
-      candlelighting: false,
-      sedrot: false,
-      omer: false
-    });
-    
-    const holidays = events.map(event => {
-      const holidayName = event.render();
-      const categoryInfo = categorizeHoliday(holidayName);
-      const gregDate = event.date.greg();
-      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      
-      return {
-        name: holidayName,
-        basename: event.basename(),
-        hebrewDate: event.date.render('he'),
-        gregorianDate: gregDate.toISOString().split('T')[0],
-        dayOfWeek: days[gregDate.getDay()],
-        category: categoryInfo.category,
-        level: categoryInfo.level,
-        workForbidden: categoryInfo.workForbidden,
-        traditionSpecific: getTraditionSpecificInfo(event.basename(), tradition)
-      };
+      year, isHebrewYear: true,
+      candlelighting: false, sedrot: false, omer: false
     });
 
-    res.json({
-      hebrewYear: year,
-      tradition: tradition,
-      shomer: shomer,
-      count: holidays.length,
-      holidays: holidays
-    });
+    const holidays = events.map(e => formatHolidayEvent(e, tradition));
+
+    setCacheHeaders(res);
+    res.json({ hebrewYear: year, tradition, shomer, count: holidays.length, holidays });
   } catch (error) {
     console.error('Error getting holidays:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
   }
 });
 
-// API endpoint: Get holidays for a Gregorian year
-// GET /api/gregorian-holidays/:year?tradition=...&shomer=...
+/**
+ * GET /api/gregorian-holidays/:year
+ * Get all holidays for a given Gregorian year (1900-2100).
+ */
 app.get('/api/gregorian-holidays/:year', (req, res) => {
   try {
-    const { year } = req.params;
     const { tradition = 'all', shomer = 'all' } = req.query;
-    
-    const gregYear = parseInt(year);
+    const gregYear = parseInt(req.params.year, 10);
+
     if (isNaN(gregYear) || gregYear < 1900 || gregYear > 2100) {
-      return res.status(400).json({
-        error: 'Invalid year. Use 1900-2100'
-      });
+      return res.status(400).json({ error: 'Invalid year. Use 1900-2100' });
     }
 
     const events = HebrewCalendar.calendar({
-      year: gregYear,
-      isHebrewYear: false,
-      candlelighting: false,
-      sedrot: false,
-      omer: false
-    });
-    
-    const holidays = events.map(event => {
-      const holidayName = event.render();
-      const categoryInfo = categorizeHoliday(holidayName);
-      const gregDate = event.date.greg();
-      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      
-      return {
-        name: holidayName,
-        basename: event.basename(),
-        hebrewDate: event.date.render('he'),
-        gregorianDate: gregDate.toISOString().split('T')[0],
-        dayOfWeek: days[gregDate.getDay()],
-        category: categoryInfo.category,
-        level: categoryInfo.level,
-        workForbidden: categoryInfo.workForbidden,
-        traditionSpecific: getTraditionSpecificInfo(event.basename(), tradition)
-      };
+      year: gregYear, isHebrewYear: false,
+      candlelighting: false, sedrot: false, omer: false
     });
 
-    res.json({
-      gregorianYear: gregYear,
-      tradition: tradition,
-      shomer: shomer,
-      count: holidays.length,
-      holidays: holidays
-    });
+    const holidays = events.map(e => formatHolidayEvent(e, tradition));
+
+    setCacheHeaders(res);
+    res.json({ gregorianYear: gregYear, tradition, shomer, count: holidays.length, holidays });
   } catch (error) {
     console.error('Error getting holidays:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
   }
 });
 
-// API endpoint: Get upcoming holidays
-// GET /api/upcoming?days=30&tradition=ashkenazi|sephardi|all&shomer=shomer|non-shomer|all
+/**
+ * GET /api/upcoming
+ * Get upcoming holidays within a day range (1-365, default 30).
+ */
 app.get('/api/upcoming', (req, res) => {
   try {
     const { days = 30, tradition = 'all', shomer = 'all' } = req.query;
-    const daysAhead = parseInt(days);
-    
+    const daysAhead = parseInt(days, 10);
+
     if (isNaN(daysAhead) || daysAhead < 1 || daysAhead > 365) {
-      return res.status(400).json({
-        error: 'Invalid days parameter. Use 1-365'
-      });
+      return res.status(400).json({ error: 'Invalid days parameter. Use 1-365' });
     }
 
     const today = new Date();
@@ -417,97 +484,64 @@ app.get('/api/upcoming', (req, res) => {
     endDate.setDate(today.getDate() + daysAhead);
 
     const events = HebrewCalendar.calendar({
-      start: today,
-      end: endDate,
-      candlelighting: false,
-      sedrot: false,
-      omer: false
+      start: today, end: endDate,
+      candlelighting: false, sedrot: false, omer: false
     });
-    
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
     const upcoming = events.map(event => {
-      const holidayName = event.render();
-      const categoryInfo = categorizeHoliday(holidayName);
       const eventDate = event.date.greg();
-      
-      return {
-        name: holidayName,
-        basename: event.basename(),
-        hebrewDate: event.date.render('he'),
-        gregorianDate: eventDate.toISOString().split('T')[0],
-        dayOfWeek: dayNames[eventDate.getDay()],
-        category: categoryInfo.category,
-        level: categoryInfo.level,
-        workForbidden: shomer === 'non-shomer' ? false : categoryInfo.workForbidden,
-        daysFromNow: Math.ceil((eventDate - today) / (1000 * 60 * 60 * 24)),
-        traditionSpecific: getTraditionSpecificInfo(event.basename(), tradition)
-      };
+      const daysFromNow = Math.ceil((eventDate - today) / (1000 * 60 * 60 * 24));
+      return formatHolidayEvent(event, tradition, {
+        workForbidden: shomer === 'non-shomer'
+          ? false
+          : categorizeHoliday(event.render()).workForbidden,
+        daysFromNow
+      });
     });
 
     res.json({
-      from: today.toISOString().split('T')[0],
-      to: endDate.toISOString().split('T')[0],
-      tradition: tradition,
-      shomer: shomer,
+      from: toISODate(today),
+      to: toISODate(endDate),
+      tradition, shomer,
       count: upcoming.length,
       holidays: upcoming
     });
   } catch (error) {
     console.error('Error getting upcoming holidays:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
   }
 });
 
-// API endpoint: Convert Gregorian date to Hebrew date
-// GET /api/convert/to-hebrew?date=YYYY-MM-DD
+/**
+ * GET /api/convert/to-hebrew
+ * Convert a Gregorian date (YYYY-MM-DD) to a Hebrew date.
+ */
 app.get('/api/convert/to-hebrew', (req, res) => {
   try {
-    const { date } = req.query;
-
-    let targetDate;
-    if (date) {
-      targetDate = new Date(date);
-      if (isNaN(targetDate.getTime())) {
-        return res.status(400).json({
-          error: 'Invalid date format. Use YYYY-MM-DD'
-        });
-      }
-    } else {
-      targetDate = new Date();
-    }
+    const { date: targetDate, error: dateError } = parseDate(req.query.date);
+    if (dateError) return res.status(400).json({ error: dateError });
 
     const hd = new HDate(targetDate);
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const events = safeGetHolidays(hd);
 
-    const events = HebrewCalendar.getHolidaysOnDate(hd) || [];
-
+    setCacheHeaders(res);
     res.json({
-      gregorianDate: targetDate.toISOString().split('T')[0],
-      hebrewDate: {
-        day: hd.getDate(),
-        month: hd.getMonthName(),
-        year: hd.getFullYear(),
-        rendered: hd.render('en'),
-        renderedHebrew: hd.render('he')
-      },
-      dayOfWeek: dayNames[targetDate.getDay()],
+      gregorianDate: toISODate(targetDate),
+      hebrewDate: buildHebrewDateDetail(hd),
+      dayOfWeek: DAY_NAMES[targetDate.getDay()],
       isShabbat: targetDate.getDay() === 6,
       holidays: events.map(e => e.render())
     });
   } catch (error) {
     console.error('Error converting to Hebrew date:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
   }
 });
 
-// API endpoint: Convert Hebrew date to Gregorian date
-// GET /api/convert/to-gregorian?year=5785&month=Nisan&day=15
+/**
+ * GET /api/convert/to-gregorian
+ * Convert a Hebrew date (year + month name + day) to a Gregorian date.
+ */
 app.get('/api/convert/to-gregorian', (req, res) => {
   try {
     const { year, month, day } = req.query;
@@ -519,66 +553,48 @@ app.get('/api/convert/to-gregorian', (req, res) => {
       });
     }
 
-    const hYear = parseInt(year);
-    const hDay = parseInt(day);
+    const hYear = parseInt(year, 10);
+    const hDay = parseInt(day, 10);
 
     if (isNaN(hYear) || hYear < 3761 || hYear > 6000) {
-      return res.status(400).json({
-        error: 'Invalid Hebrew year. Use years 3761-6000'
-      });
+      return res.status(400).json({ error: 'Invalid Hebrew year. Use years 3761-6000' });
     }
-
     if (isNaN(hDay) || hDay < 1 || hDay > 30) {
-      return res.status(400).json({
-        error: 'Invalid day. Use 1-30'
-      });
+      return res.status(400).json({ error: 'Invalid day. Use 1-30' });
     }
-
-    const validMonths = [
-      'Nisan', 'Iyyar', 'Sivan', 'Tamuz', 'Av', 'Elul',
-      'Tishrei', 'Cheshvan', 'Kislev', 'Tevet', 'Shvat', 'Adar',
-      'Adar I', 'Adar II'
-    ];
-
-    if (!validMonths.includes(month)) {
+    if (!VALID_HEBREW_MONTHS.includes(month)) {
       return res.status(400).json({
-        error: `Invalid month. Valid months: ${validMonths.join(', ')}`
+        error: `Invalid month. Valid months: ${VALID_HEBREW_MONTHS.join(', ')}`
       });
     }
 
     const hd = new HDate(hDay, month, hYear);
     const gregDate = hd.greg();
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const events = safeGetHolidays(hd);
 
-    const events = HebrewCalendar.getHolidaysOnDate(hd) || [];
-
+    setCacheHeaders(res);
     res.json({
-      hebrewDate: {
-        day: hd.getDate(),
-        month: hd.getMonthName(),
-        year: hd.getFullYear(),
-        rendered: hd.render('en'),
-        renderedHebrew: hd.render('he')
-      },
-      gregorianDate: gregDate.toISOString().split('T')[0],
-      dayOfWeek: dayNames[gregDate.getDay()],
+      hebrewDate: buildHebrewDateDetail(hd),
+      gregorianDate: toISODate(gregDate),
+      dayOfWeek: DAY_NAMES[gregDate.getDay()],
       isShabbat: gregDate.getDay() === 6,
       holidays: events.map(e => e.render())
     });
   } catch (error) {
     console.error('Error converting to Gregorian date:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
+    res.status(500).json({ error: 'Internal server error', message: error.message });
   }
 });
 
-// Root endpoint with API documentation
+// ─── Root / API Documentation ───────────────────────────────────────────────
+
+/** GET / — Returns machine-readable API documentation */
 app.get('/', (req, res) => {
   res.json({
     name: 'Jewish Holidays API',
+    version: '2.0.0',
     author: 'Ethan Ackerman',
+    repository: 'https://github.com/EthanAckerman-git/JewishHolidaysAPI',
     description: 'Check if a date is a Jewish holiday with Sephardi/Ashkenazi traditions and shomer/non-shomer observance levels',
     endpoints: {
       '/api/is-holiday': {
@@ -586,10 +602,10 @@ app.get('/', (req, res) => {
         description: 'Check if a specific date is a Jewish holiday or Shabbat',
         parameters: {
           date: 'YYYY-MM-DD (optional, defaults to today)',
-          tradition: 'ashkenazi | sephardi | all (optional, defaults to all)',
-          shomer: 'shomer | non-shomer | partial | all (optional, defaults to all)'
+          tradition: 'ashkenazi | sephardi | all (default: all)',
+          shomer: 'shomer | non-shomer | partial | all (default: all)'
         },
-        example: '/api/is-holiday?date=2024-10-03&tradition=ashkenazi&shomer=shomer'
+        example: '/api/is-holiday?date=2025-10-03&tradition=ashkenazi&shomer=shomer'
       },
       '/api/holidays/:hebrewYear': {
         method: 'GET',
@@ -609,11 +625,11 @@ app.get('/', (req, res) => {
           tradition: 'ashkenazi | sephardi | all (optional)',
           shomer: 'shomer | non-shomer | partial | all (optional)'
         },
-        example: '/api/gregorian-holidays/2024'
+        example: '/api/gregorian-holidays/2025'
       },
       '/api/upcoming': {
         method: 'GET',
-        description: 'Get upcoming holidays within a range',
+        description: 'Get upcoming holidays within a day range',
         parameters: {
           days: 'Number of days ahead (1-365, default 30)',
           tradition: 'ashkenazi | sephardi | all (optional)',
@@ -650,27 +666,26 @@ app.get('/', (req, res) => {
       ashkenazi: 'Eastern European Jewish traditions',
       sephardi: 'Mediterranean/Middle Eastern Jewish traditions',
       all: 'Returns information for all traditions'
-    }
+    },
+    rateLimit: '100 requests per minute per IP'
   });
 });
 
-// 404 handler for unknown routes
+// ─── Error Handling ─────────────────────────────────────────────────────────
+
+/** 404 handler — catches all unmatched routes */
 app.use((req, res) => {
   res.status(404).json({
     error: 'Not found',
     message: `Route ${req.method} ${req.path} does not exist`,
-    availableEndpoints: [
-      '/api/is-holiday',
-      '/api/holidays/:hebrewYear',
-      '/api/gregorian-holidays/:year',
-      '/api/upcoming',
-      '/api/convert/to-hebrew',
-      '/api/convert/to-gregorian'
-    ]
+    availableEndpoints: AVAILABLE_ENDPOINTS
   });
 });
 
+// ─── Start Server ───────────────────────────────────────────────────────────
+
 app.listen(PORT, () => {
-  console.log(`Jewish Holidays API by Ethan Ackerman running on port ${PORT}`);
-  console.log(`API documentation: http://localhost:${PORT}/`);
+  console.log(`Jewish Holidays API v2.0.0 by Ethan Ackerman`);
+  console.log(`Listening on port ${PORT}`);
+  console.log(`API docs: http://localhost:${PORT}/`);
 });
