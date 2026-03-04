@@ -11,7 +11,9 @@ A RESTful API to check if a date is a Jewish holiday, with support for Sephardi 
 - **Tradition Support**: Sephardi and Ashkenazi minhag differences
 - **Observance Levels**: Filter by shomer, non-shomer, or partial observance
 - **Work Restrictions**: Know if work is permitted/forbidden on specific days
+- **Date Conversion**: Convert between Gregorian and Hebrew calendar dates
 - **Multiple Date Formats**: Gregorian and Hebrew calendar support
+- **CORS Enabled**: Use directly from any browser-based application
 
 ## Quick Start
 
@@ -107,6 +109,62 @@ GET /api/upcoming?days=30&tradition=ashkenazi|sephardi|all&shomer=shomer|non-sho
 GET /api/upcoming?days=60&shomer=shomer
 ```
 
+### Convert Gregorian date to Hebrew date
+
+```
+GET /api/convert/to-hebrew?date=YYYY-MM-DD
+```
+
+**Parameters:**
+- `date` (optional): Date in YYYY-MM-DD format (defaults to today)
+
+**Example Response:**
+```json
+{
+  "gregorianDate": "2025-04-13",
+  "hebrewDate": {
+    "day": 15,
+    "month": "Nisan",
+    "year": 5785,
+    "rendered": "15th of Nisan, 5785",
+    "renderedHebrew": "15 נִיסָן, 5785"
+  },
+  "dayOfWeek": "Sunday",
+  "isShabbat": false,
+  "holidays": ["Pesach I"]
+}
+```
+
+### Convert Hebrew date to Gregorian date
+
+```
+GET /api/convert/to-gregorian?year=5785&month=Nisan&day=15
+```
+
+**Parameters:**
+- `year` (required): Hebrew year (e.g. 5785)
+- `month` (required): Hebrew month name (e.g. Nisan, Tishrei, Adar)
+- `day` (required): Day of the month (1-30)
+
+**Valid Hebrew months:** Nisan, Iyyar, Sivan, Tamuz, Av, Elul, Tishrei, Cheshvan, Kislev, Tevet, Shvat, Adar, Adar I, Adar II
+
+**Example Response:**
+```json
+{
+  "hebrewDate": {
+    "day": 15,
+    "month": "Nisan",
+    "year": 5785,
+    "rendered": "15th of Nisan, 5785",
+    "renderedHebrew": "15 נִיסָן, 5785"
+  },
+  "gregorianDate": "2025-04-13",
+  "dayOfWeek": "Sunday",
+  "isShabbat": false,
+  "holidays": ["Pesach I"]
+}
+```
+
 ## Observance Levels Explained
 
 ### Shomer
@@ -174,8 +232,8 @@ GET /api/upcoming?days=60&shomer=shomer
 ## Installation
 
 ```bash
-git clone https://github.com/ethanackerman/jewish-holidays-api.git
-cd jewish-holidays-api
+git clone https://github.com/EthanAckerman-git/JewishHolidaysAPI.git
+cd JewishHolidaysAPI
 npm install
 npm start
 ```
@@ -210,22 +268,32 @@ curl http://localhost:3000/api/is-holiday
 
 ### Check specific date for Sephardi traditions
 ```bash
-curl "http://localhost:3000/api/is-holiday?date=2024-04-23&tradition=sephardi"
+curl "http://localhost:3000/api/is-holiday?date=2025-04-13&tradition=sephardi"
 ```
 
 ### Check if shomer needs to observe
 ```bash
-curl "http://localhost:3000/api/is-holiday?date=2024-04-23&shomer=shomer"
+curl "http://localhost:3000/api/is-holiday?date=2025-04-13&shomer=shomer"
 ```
 
-### Get all 2024 holidays for a shomer
+### Get all 2025 holidays for a shomer
 ```bash
-curl "http://localhost:3000/api/gregorian-holidays/2024?shomer=shomer"
+curl "http://localhost:3000/api/gregorian-holidays/2025?shomer=shomer"
 ```
 
 ### Get upcoming holidays for next 90 days
 ```bash
 curl "http://localhost:3000/api/upcoming?days=90"
+```
+
+### Convert a Gregorian date to Hebrew
+```bash
+curl "http://localhost:3000/api/convert/to-hebrew?date=2025-04-13"
+```
+
+### Convert a Hebrew date to Gregorian
+```bash
+curl "http://localhost:3000/api/convert/to-gregorian?year=5785&month=Nisan&day=15"
 ```
 
 ## Response Fields
@@ -239,6 +307,7 @@ curl "http://localhost:3000/api/upcoming?days=90"
 | `basename` | Base holiday name (e.g., "Pesach") |
 | `hebrewDate` | Date in Hebrew format |
 | `gregorianDate` | Date in YYYY-MM-DD format |
+| `dayOfWeek` | Day of the week (e.g., "Sunday") |
 | `category` | Holiday category (yom-tov, chol-hamoed, minor, fast, shabbat) |
 | `level` | Restriction level (strict, intermediate, permissive, restrictive) |
 | `workForbidden` | Boolean - whether work is forbidden |
@@ -247,8 +316,9 @@ curl "http://localhost:3000/api/upcoming?days=90"
 
 ## Technologies
 
-- [Node.js](https://nodejs.org/)
+- [Node.js](https://nodejs.org/) (>=18.0.0)
 - [Express.js](https://expressjs.com/)
+- [cors](https://github.com/expressjs/cors) - Cross-origin resource sharing
 - [@hebcal/core](https://github.com/hebcal/hebcal-es6) - Jewish calendar calculations
 
 ## Contributing
@@ -272,4 +342,4 @@ Created with ❤️ for the Jewish community worldwide.
 
 ## Support
 
-For issues or questions, please open an issue on GitHub.
+For issues or questions, please open an issue on [GitHub](https://github.com/EthanAckerman-git/JewishHolidaysAPI/issues).

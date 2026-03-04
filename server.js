@@ -1,8 +1,11 @@
 const express = require('express');
+const cors = require('cors');
 const { HebrewCalendar, HDate, Location, Event, Zmanim } = require('@hebcal/core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(cors());
 
 // Holiday categories for shomer/non-shomer filtering
 const HOLIDAY_CATEGORIES = {
@@ -296,25 +299,26 @@ app.get('/api/holidays/:hebrewYear', (req, res) => {
       });
     }
 
-    const options = {
+    const events = HebrewCalendar.calendar({
       year: year,
       isHebrewYear: true,
       candlelighting: false,
       sedrot: false,
       omer: false
-    };
-    
-    const events = HebrewCalendar.getHolidaysForYear(options);
+    });
     
     const holidays = events.map(event => {
       const holidayName = event.render();
       const categoryInfo = categorizeHoliday(holidayName);
+      const gregDate = event.date.greg();
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       
       return {
         name: holidayName,
         basename: event.basename(),
         hebrewDate: event.date.render('he'),
-        gregorianDate: event.date.greg().toISOString().split('T')[0],
+        gregorianDate: gregDate.toISOString().split('T')[0],
+        dayOfWeek: days[gregDate.getDay()],
         category: categoryInfo.category,
         level: categoryInfo.level,
         workForbidden: categoryInfo.workForbidden,
@@ -352,25 +356,26 @@ app.get('/api/gregorian-holidays/:year', (req, res) => {
       });
     }
 
-    const options = {
+    const events = HebrewCalendar.calendar({
       year: gregYear,
       isHebrewYear: false,
       candlelighting: false,
       sedrot: false,
       omer: false
-    };
-    
-    const events = HebrewCalendar.getHolidaysForYear(options);
+    });
     
     const holidays = events.map(event => {
       const holidayName = event.render();
       const categoryInfo = categorizeHoliday(holidayName);
+      const gregDate = event.date.greg();
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       
       return {
         name: holidayName,
         basename: event.basename(),
         hebrewDate: event.date.render('he'),
-        gregorianDate: event.date.greg().toISOString().split('T')[0],
+        gregorianDate: gregDate.toISOString().split('T')[0],
+        dayOfWeek: days[gregDate.getDay()],
         category: categoryInfo.category,
         level: categoryInfo.level,
         workForbidden: categoryInfo.workForbidden,
@@ -411,11 +416,15 @@ app.get('/api/upcoming', (req, res) => {
     const endDate = new Date();
     endDate.setDate(today.getDate() + daysAhead);
 
-    const hStart = new HDate(today);
-    const hEnd = new HDate(endDate);
+    const events = HebrewCalendar.calendar({
+      start: today,
+      end: endDate,
+      candlelighting: false,
+      sedrot: false,
+      omer: false
+    });
     
-    const events = HebrewCalendar.getHolidaysOnDateRange(hStart, hEnd);
-    
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const upcoming = events.map(event => {
       const holidayName = event.render();
       const categoryInfo = categorizeHoliday(holidayName);
@@ -426,6 +435,7 @@ app.get('/api/upcoming', (req, res) => {
         basename: event.basename(),
         hebrewDate: event.date.render('he'),
         gregorianDate: eventDate.toISOString().split('T')[0],
+        dayOfWeek: dayNames[eventDate.getDay()],
         category: categoryInfo.category,
         level: categoryInfo.level,
         workForbidden: shomer === 'non-shomer' ? false : categoryInfo.workForbidden,
@@ -444,6 +454,119 @@ app.get('/api/upcoming', (req, res) => {
     });
   } catch (error) {
     console.error('Error getting upcoming holidays:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: error.message
+    });
+  }
+});
+
+// API endpoint: Convert Gregorian date to Hebrew date
+// GET /api/convert/to-hebrew?date=YYYY-MM-DD
+app.get('/api/convert/to-hebrew', (req, res) => {
+  try {
+    const { date } = req.query;
+
+    let targetDate;
+    if (date) {
+      targetDate = new Date(date);
+      if (isNaN(targetDate.getTime())) {
+        return res.status(400).json({
+          error: 'Invalid date format. Use YYYY-MM-DD'
+        });
+      }
+    } else {
+      targetDate = new Date();
+    }
+
+    const hd = new HDate(targetDate);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    const events = HebrewCalendar.getHolidaysOnDate(hd) || [];
+
+    res.json({
+      gregorianDate: targetDate.toISOString().split('T')[0],
+      hebrewDate: {
+        day: hd.getDate(),
+        month: hd.getMonthName(),
+        year: hd.getFullYear(),
+        rendered: hd.render('en'),
+        renderedHebrew: hd.render('he')
+      },
+      dayOfWeek: dayNames[targetDate.getDay()],
+      isShabbat: targetDate.getDay() === 6,
+      holidays: events.map(e => e.render())
+    });
+  } catch (error) {
+    console.error('Error converting to Hebrew date:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: error.message
+    });
+  }
+});
+
+// API endpoint: Convert Hebrew date to Gregorian date
+// GET /api/convert/to-gregorian?year=5785&month=Nisan&day=15
+app.get('/api/convert/to-gregorian', (req, res) => {
+  try {
+    const { year, month, day } = req.query;
+
+    if (!year || !month || !day) {
+      return res.status(400).json({
+        error: 'Missing required parameters: year, month, day',
+        example: '/api/convert/to-gregorian?year=5785&month=Nisan&day=15'
+      });
+    }
+
+    const hYear = parseInt(year);
+    const hDay = parseInt(day);
+
+    if (isNaN(hYear) || hYear < 3761 || hYear > 6000) {
+      return res.status(400).json({
+        error: 'Invalid Hebrew year. Use years 3761-6000'
+      });
+    }
+
+    if (isNaN(hDay) || hDay < 1 || hDay > 30) {
+      return res.status(400).json({
+        error: 'Invalid day. Use 1-30'
+      });
+    }
+
+    const validMonths = [
+      'Nisan', 'Iyyar', 'Sivan', 'Tamuz', 'Av', 'Elul',
+      'Tishrei', 'Cheshvan', 'Kislev', 'Tevet', 'Shvat', 'Adar',
+      'Adar I', 'Adar II'
+    ];
+
+    if (!validMonths.includes(month)) {
+      return res.status(400).json({
+        error: `Invalid month. Valid months: ${validMonths.join(', ')}`
+      });
+    }
+
+    const hd = new HDate(hDay, month, hYear);
+    const gregDate = hd.greg();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    const events = HebrewCalendar.getHolidaysOnDate(hd) || [];
+
+    res.json({
+      hebrewDate: {
+        day: hd.getDate(),
+        month: hd.getMonthName(),
+        year: hd.getFullYear(),
+        rendered: hd.render('en'),
+        renderedHebrew: hd.render('he')
+      },
+      gregorianDate: gregDate.toISOString().split('T')[0],
+      dayOfWeek: dayNames[gregDate.getDay()],
+      isShabbat: gregDate.getDay() === 6,
+      holidays: events.map(e => e.render())
+    });
+  } catch (error) {
+    console.error('Error converting to Gregorian date:', error);
     res.status(500).json({
       error: 'Internal server error',
       message: error.message
@@ -497,6 +620,24 @@ app.get('/', (req, res) => {
           shomer: 'shomer | non-shomer | partial | all (optional)'
         },
         example: '/api/upcoming?days=60&shomer=shomer'
+      },
+      '/api/convert/to-hebrew': {
+        method: 'GET',
+        description: 'Convert a Gregorian date to a Hebrew date',
+        parameters: {
+          date: 'YYYY-MM-DD (optional, defaults to today)'
+        },
+        example: '/api/convert/to-hebrew?date=2025-04-13'
+      },
+      '/api/convert/to-gregorian': {
+        method: 'GET',
+        description: 'Convert a Hebrew date to a Gregorian date',
+        parameters: {
+          year: 'Hebrew year (e.g. 5785)',
+          month: 'Hebrew month name (e.g. Nisan, Tishrei, Adar)',
+          day: 'Day of the month (1-30)'
+        },
+        example: '/api/convert/to-gregorian?year=5785&month=Nisan&day=15'
       }
     },
     shomerLevels: {
@@ -510,6 +651,22 @@ app.get('/', (req, res) => {
       sephardi: 'Mediterranean/Middle Eastern Jewish traditions',
       all: 'Returns information for all traditions'
     }
+  });
+});
+
+// 404 handler for unknown routes
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Not found',
+    message: `Route ${req.method} ${req.path} does not exist`,
+    availableEndpoints: [
+      '/api/is-holiday',
+      '/api/holidays/:hebrewYear',
+      '/api/gregorian-holidays/:year',
+      '/api/upcoming',
+      '/api/convert/to-hebrew',
+      '/api/convert/to-gregorian'
+    ]
   });
 });
 
