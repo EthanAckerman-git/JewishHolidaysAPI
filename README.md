@@ -4,7 +4,22 @@
 
 A production-ready RESTful API for Jewish holiday lookups, Shabbat detection, Sephardi/Ashkenazi tradition differences, shomer observance levels, and Gregorian&#8596;Hebrew date conversion.
 
-> **Free &amp; public** &mdash; clone the repo, deploy to any Node.js host, and you have a live API in minutes.
+> **Free &amp; public** &mdash; use the hosted API below, or clone the repo and self-host.
+
+## Live API
+
+**Base URL:** [`https://jewishholidaysapi.onrender.com`](https://jewishholidaysapi.onrender.com)
+
+Anyone can use this API right now &mdash; no API key required, CORS enabled for browser apps.
+
+> **Cold-start warning:** This API is hosted on Render's free tier. If the server has been idle, the **first request may take ~50 seconds** while the instance spins up. All subsequent requests are fast. If you need zero cold-start latency, self-host or upgrade to a paid tier.
+
+Try it now:
+```bash
+curl https://jewishholidaysapi.onrender.com/api/is-holiday
+```
+
+---
 
 ## Features
 
@@ -35,7 +50,7 @@ The API will be available at `http://localhost:3000`.
 
 ## API Endpoints
 
-Base URL (local): `http://localhost:3000`
+Base URL: `https://jewishholidaysapi.onrender.com` (or `http://localhost:3000` for local)
 
 ### 1. Check if a date is a holiday
 
@@ -158,35 +173,35 @@ GET /api/convert/to-gregorian?year=5785&month=Nisan&day=15
 
 ```bash
 # Check if today is a holiday
-curl https://YOUR_HOST/api/is-holiday
+curl https://jewishholidaysapi.onrender.com/api/is-holiday
 
 # Check a specific date with Sephardi tradition
-curl "https://YOUR_HOST/api/is-holiday?date=2025-04-13&tradition=sephardi"
+curl "https://jewishholidaysapi.onrender.com/api/is-holiday?date=2025-04-13&tradition=sephardi"
 
 # Get all holidays for Hebrew year 5786
-curl https://YOUR_HOST/api/holidays/5786
+curl https://jewishholidaysapi.onrender.com/api/holidays/5786
 
 # Get upcoming holidays for next 90 days
-curl "https://YOUR_HOST/api/upcoming?days=90"
+curl "https://jewishholidaysapi.onrender.com/api/upcoming?days=90"
 
 # Convert Gregorian to Hebrew
-curl "https://YOUR_HOST/api/convert/to-hebrew?date=2025-12-25"
+curl "https://jewishholidaysapi.onrender.com/api/convert/to-hebrew?date=2025-12-25"
 
 # Convert Hebrew to Gregorian
-curl "https://YOUR_HOST/api/convert/to-gregorian?year=5785&month=Nisan&day=15"
+curl "https://jewishholidaysapi.onrender.com/api/convert/to-gregorian?year=5785&month=Nisan&day=15"
 ```
 
 ### JavaScript (fetch)
 
 ```javascript
 // Check if a date is a holiday
-const res = await fetch('https://YOUR_HOST/api/is-holiday?date=2025-04-13&tradition=ashkenazi');
+const res = await fetch('https://jewishholidaysapi.onrender.com/api/is-holiday?date=2025-04-13&tradition=ashkenazi');
 const data = await res.json();
 console.log(data.isHoliday);   // true
 console.log(data.holidayName); // "Pesach I"
 
 // Convert Gregorian to Hebrew
-const convert = await fetch('https://YOUR_HOST/api/convert/to-hebrew?date=2025-04-13');
+const convert = await fetch('https://jewishholidaysapi.onrender.com/api/convert/to-hebrew?date=2025-04-13');
 const hebrew = await convert.json();
 console.log(hebrew.hebrewDate.rendered); // "15th of Nisan, 5785"
 ```
@@ -197,7 +212,7 @@ console.log(hebrew.hebrewDate.rendered); // "15th of Nisan, 5785"
 import requests
 
 # Check if a date is a holiday
-r = requests.get('https://YOUR_HOST/api/is-holiday', params={
+r = requests.get('https://jewishholidaysapi.onrender.com/api/is-holiday', params={
     'date': '2025-04-13',
     'tradition': 'sephardi',
     'shomer': 'shomer'
@@ -207,13 +222,13 @@ print(data['isHoliday'])    # True
 print(data['holidayName'])  # "Pesach I"
 
 # Convert Hebrew to Gregorian
-r = requests.get('https://YOUR_HOST/api/convert/to-gregorian', params={
+r = requests.get('https://jewishholidaysapi.onrender.com/api/convert/to-gregorian', params={
     'year': 5785, 'month': 'Nisan', 'day': 15
 })
 print(r.json()['gregorianDate'])  # "2025-04-13"
 ```
 
-> Replace `YOUR_HOST` with your deployed URL (e.g. `your-app.onrender.com`) or `localhost:3000` for local development.
+> For local development, replace the URL above with `localhost:3000`.
 
 ---
 

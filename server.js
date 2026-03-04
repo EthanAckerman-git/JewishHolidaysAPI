@@ -22,9 +22,14 @@ const { HebrewCalendar, HDate } = require('@hebcal/core');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.set('trust proxy', 1);
+
 // ─── Middleware ──────────────────────────────────────────────────────────────
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 app.use(cors());
 app.use(compression());
 
@@ -595,7 +600,9 @@ app.get('/', (req, res) => {
     version: '2.0.0',
     author: 'Ethan Ackerman',
     repository: 'https://github.com/EthanAckerman-git/JewishHolidaysAPI',
+    baseUrl: 'https://jewishholidaysapi.onrender.com',
     description: 'Check if a date is a Jewish holiday with Sephardi/Ashkenazi traditions and shomer/non-shomer observance levels',
+    note: 'Free-tier hosting — the first request after inactivity may take ~50 seconds while the server wakes up. Subsequent requests are fast.',
     endpoints: {
       '/api/is-holiday': {
         method: 'GET',
